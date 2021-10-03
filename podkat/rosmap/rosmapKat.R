@@ -2,6 +2,8 @@ library(podkat)
 library(RUnit)
 library(VariantAnnotation)
 #----------------------------------------------------------------------------------------------------
+khaleesi <- grepl("khaleesi", Sys.info()[["nodename"]])
+hagfish <-  grepl("hagfish", Sys.info()[["nodename"]])
 file.dir <- "~/github/TrenaProjectAD/explore/WGS-Harmonization/metadata-all"
 
 specimen.file <- file.path(file.dir, "ROSMAP_biospecimen_metadata.csv")
@@ -12,14 +14,26 @@ clinical.file <- file.path(file.dir, "ROSMAP_clinical.csv")
 checkTrue(file.exists(clinical.file))
 tbl.clin <- read.table(clinical.file, sep=",", header=TRUE, nrow=-1)
 
-dir <-  "/local/users/pshannon/github/TrenaProjectAD/explore/ampad-1898-samples/vcf"
-filename <- "NIA_JG_1898_samples_GRM_WGS_b37_JointAnalysis01_2017-12-08_19.recalibrated_variants.vcf.gz"
+if(khaleesi){
+   dir <-  "/local/users/pshannon/github/TrenaProjectAD/explore/ampad-1898-samples/vcf"
+   filename <- "NIA_JG_1898_samples_GRM_WGS_b37_JointAnalysis01_2017-12-08_19.recalibrated_variants.vcf.gz"
+   apoe.region <- GRanges(seqnames="19", IRanges(start=45411000, end=45413000))   # 2kb
+   }
+
+if(hagfish){
+   dir <-  "./"
+   filename <- "chr19-apoe-100k-hg19.vcf.gz"
+   apoe.region <- GRanges(seqnames="19", IRanges(start=45360000, end=45460000))
+   apoe.region <-
+   center.base <- as.integer((45412079 + 45411941)/2)  # [1] 45412010
+   apoe.region <- GRanges(seqnames="19", IRanges(start=center.base-1000, end=center.base+1000))
+   }
+
 vcfFile <- file.path(dir, filename)
       # AD vcf's in hg19:
       #   rs429358   19:45411941 (GRCh37)
       #   rs7412     19:45412079 (GRCh37)
 
-apoe.region <- GRanges(seqnames="19", IRanges(start=45411000, end=45413000))   # 2kb
 vcf <- readVcf(vcfFile, "hg19", apoe.region)
 vcf.sampleIDs <- colnames(geno(vcf)$GT)
 
@@ -69,7 +83,7 @@ createCovariatesTable <- function(injectEnrichment=FALSE)
         tbl.cov <- tbl.cov[-deleters,]
    dim(tbl.cov)  # 840 5
 
-     # choose a first, simple outcomes variable. cogdx?  
+     # choose a first, simple outcomes variable. cogdx?
      #    1     NCI, No cognitive impairment (No impaired domains)
      #    2     MCI, Mild cognitive impairment (One impaired domain) and NO other cause of CI
      #    3     MCI, Mild cognitive impairment (One impaired domain) AND another cause of CI
@@ -89,8 +103,16 @@ createCovariatesTable <- function(injectEnrichment=FALSE)
    tbl.cov$v34[which(tbl.cov$apoe_genotype==34)] <- 1
    tbl.cov$v44 <- rep(0, nrow(tbl.cov))
    tbl.cov$v44[which(tbl.cov$apoe_genotype==44)] <- 1
+
+     # fabricate an outcomes variable from actual variants at rs29358
+     #   rs429358   19:45411941 (GRCh37)
+     #   rs7412     19:45412079 (GRCh37)
+
+   has.rs429358 <- rep(0, nrow(geno))
+   has.rs429358[(which(as.matrix(geno)[, "19:45411941_T/C"] > 0))] <- 1
+
    rownames(tbl.cov) <- tbl.cov$individualID
-   
+
    tbl.cov
 
 } # createCovariatesTable
@@ -106,7 +128,7 @@ test_createCovariatesTable <- function()
     checkEquals(colnames(tbl.cov), coi.expected)
     checkTrue(all(grepl("^R", rownames(tbl.cov))))
 
-       # v44 has 11x increased AD risk,  do we see that?   
+       # v44 has 11x increased AD risk,  do we see that?
 
     checkEquals(median(subset(tbl.cov, v44==1)$cogdx), 4)  # AD, no other causes of cog impairment
     checkEquals(median(subset(tbl.cov, v44==0)$cogdx), 2)  # mild cognitive impairment
@@ -132,7 +154,7 @@ createGeno <- function()
    geno <- geno[-na.matches,]
    name.match.indices <-  match(rownames(geno), tbl.covAll$specimenID)
    stopifnot(length(which(is.na(name.match.indices))) == 0)
-    
+
    rownames(geno) <- tbl.covAll$individualID[name.match.indices]
    geno
 
@@ -143,7 +165,8 @@ test_createGeno <- function()
     message(sprintf("--- test_createGeno"))
 
     geno <- createGeno()
-    checkEquals(dim(geno), c(1144, 32))
+    # khaleesi, 2kb checkEquals(dim(geno), c(1144, 32))
+    # hagfish, 100kb, 2288
     colnames(geno)
     checkTrue(all(grepl("19:", colnames(geno))))
     checkTrue(all(grepl("^R", rownames(geno))))
@@ -152,13 +175,13 @@ test_createGeno <- function()
       # AD vcf's in hg19:
       #   rs429358   19:45411941 (GRCh37)   ref: T
       #   rs7412     19:45412079 (GRCh37)   ref: C
-    ad.snps <- c("19:45411941", "19:45412079")
+    ad.snps <- c("19:45411941_T/C", "19:45412079_C/T")
     all(ad.snps %in% colnames(geno))
     mtx.geno <- as.matrix(geno)[, ad.snps]
     sums.by.row <- rowSums(mtx.geno)
     table(rowSums(mtx.geno))
-       #   0   1   2 
-       # 698 398  48 
+       #   0   1   2
+       # 698 398  48
     checkEquals(length(which(sums.by.row==2)), 48)
        # choose the first sample with variants in both positions
     x <- names(which(sums.by.row == 2)[1])
@@ -169,7 +192,8 @@ test_createGeno <- function()
        # go back to the tradtional VariantAnnotation
     checkTrue(sampleID %in% vcf.sampleIDs)
     mtx.orig <- geno(vcf)$GT
-    checkEquals(dim(mtx.orig), c(34, 1894))
+    # khaleesi, 2kb: checkEquals(dim(mtx.orig), c(34, 1894))
+    # hagfish, 100kb: checkEquals(dim(mtx.orig), c(2754, 1894))
     roi <- unlist(lapply(ad.snps, function(loc) grep(loc, rownames(mtx.orig))))
     checkEquals(as.character(mtx.orig[roi, sampleID]), c("0/1", "0/1"))
 
@@ -179,6 +203,7 @@ test_buildModel <- function()
 {
    tbl.cov <- createCovariatesTable()
    geno <- createGeno()
+   dim(geno)
 
    shared.ids <- intersect(rownames(geno), tbl.cov$individualID)
    length(shared.ids) # 1143
@@ -186,18 +211,50 @@ test_buildModel <- function()
    tbl.cov <- subset(tbl.cov, individualID %in% shared.ids)
    checkEquals(nrow(tbl.cov), 1143)
    checkEquals(nrow(geno), 1143)
-   
-   null.model <- nullModel(v44 ~ age_death + msex, tbl.cov)
 
+   null.model <- nullModel(has.rs429358 ~ age_death + msex, tbl.cov)
 
-   lm.model <- lm(v44 ~ age_death + msex, tbl.cov)
+   lm.model <- lm(has.rs429358 ~ age_death + msex, tbl.cov)
    summary(lm.model)  # adjusted R-squared: useless model, as expected  0.008743
 
-   gr.oi <- GRanges(seqnames="19", IRanges(start=45407983, end=45416174))
-
+   #gr.oi <- GRanges(seqnames="19", IRanges(start=45407983, end=45416174))
+   gr.oi <- apoe.region
    windows <- partitionRegions(gr.oi, width=250, overlap=0.5)
 
    res.c <- assocTest(geno, null.model, windows)
+   tbl.res <- as.data.frame(res.c)
+   tbl.res$score <- -log10(tbl.res$p.value)
+   tbl.res$seqnames <- as.character(tbl.res$seqnames)
+   fivenum(tbl.res$score)
+   tbl.res
+
+   if(hagfish){
+      igv <- start.igv("APOE", "hg19")
+      tbl.adSnps <- data.frame(chrom="19",
+                               start=c(45411941, 45412079),
+                               end=c(45411941, 45412079),
+                               stringsAsFactors=FALSE)
+      track <- DataFrameAnnotationTrack("AD", tbl.adSnps, color="black")
+      displayTrack(igv, track)
+      snp.counts <- colSums(geno)
+      loc.strings <- names(snp.counts)
+      tokenSet <- strsplit(loc.strings, (":|_"))
+      parseTokens <- function(tokens){
+         data.frame(chrom=tokens[1], start=as.integer(tokens[2])-1, end=as.integer(tokens[2])+1, stringsAsFactors=FALSE)
+         }
+      tbl.snps <- do.call(rbind, lapply(tokenSet, parseTokens))
+      tbl.snps$score <- as.integer(snp.counts)
+      track <- DataFrameQuantitativeTrack("snps", tbl.snps, color="red", autoscale=TRUE)
+      displayTrack(igv, track)
+
+      track <- DataFrameQuantitativeTrack("podkat", tbl.res[, c("seqnames", "start", "end", "score")], color="red", autoscale=TRUE)
+      displayTrack(igv, track)
+      track <- VariantTrack("rosmap", vcf)
+      displayTrack(igv, track)
+      showGenomicRegion(igv, "chr19:45,411,915-45,412,103")
+      }
+
+   head(tbl.res)
    print(res.c)
    plot(res.c, which="p.value")
 
