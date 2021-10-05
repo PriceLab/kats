@@ -6,9 +6,10 @@ library(logicFS)
 if(!exists("my.anneal"))
    my.anneal <- logreg.anneal.control(start = 2, end = -2, iter = 10000)
 
-if(!exists("etx"))
+if(!exists("etx")){
     etx <- EndophenotypeExplorer$new("NDUFS2", "hg38", initialize.snpLocs=TRUE)
-
+    tbl.eqtl <- etx$getEQTLsForGene()
+    }
 #----------------------------------------------------------------------------------------------------
 runTests <- function()
 {
@@ -105,7 +106,6 @@ test_createCovariatesTable <- function()
 #----------------------------------------------------------------------------------------------------
 createGeno <- function(pval.cutoff=1e-6)
 {
-   tbl.eqtl <- etx$getEQTLsForGene()
    tbl.eqtl <- subset(tbl.eqtl, pvalue <= pval.cutoff & study=="ampad-rosmap")
    dim(tbl.eqtl)  # 19 10
    rsids <- tbl.eqtl$rsid
@@ -335,14 +335,13 @@ ndufs2 <- function()
        printf("   subsetting tbl.rsid.locs by range")
        rsids <- tbl.rsid.locs$rsid[range]
        rsids.valid <- intersect(rsids, colnames(mtx.skat))
-       printf("   subsetting mtx.skat by %d rsids.valid", length(rsids.valid))
+       #printf("   subsetting mtx.skat by %d rsids.valid", length(rsids.valid))
        if(length(rsids.valid) == 0) next;
-       if(i == 274) browser()
        mtx.skat.i <- mtx.skat[,rsids.valid, drop=FALSE]
-       printf("   mtx.skat.i:   %d x %d", nrow(mtx.skat.i), ncol(mtx.skat.i))
+       #printf("   mtx.skat.i:   %d x %d", nrow(mtx.skat.i), ncol(mtx.skat.i))
        x <- SKAT(mtx.skat.i, null.model, method="SKATO")
-       #if(x$p.value < 0.1)
-       #    printf("%d: %f", i, x$p.value)
+       if(x$p.value < 0.1)
+           printf("%d: %f", i, x$p.value)
        score <- -log10(x$p.value)
        tbls.skat[[i]] <- data.frame(rsid=paste(rsids, collapse=","),
                                    score = score,
@@ -368,13 +367,13 @@ ndufs2 <- function()
        rsids <- colnames(mtx.skat)[range]
        if(any(is.na(rsids))) browser()
        rsids.valid <- intersect(rsids, colnames(mtx.skat))
-       printf("   subsetting mtx.skat by %d rsids.valid", length(rsids.valid))
+       #printf("   subsetting mtx.skat by %d rsids.valid", length(rsids.valid))
        if(length(rsids.valid) == 0) next;
        mtx.skat.i <- mtx.skat[,rsids.valid, drop=FALSE]
-       printf("   mtx.skat.i:   %d x %d", nrow(mtx.skat.i), ncol(mtx.skat.i))
+       #printf("   mtx.skat.i:   %d x %d", nrow(mtx.skat.i), ncol(mtx.skat.i))
        x <- SKAT(mtx.skat.i, null.model, method="SKATO")
-       #if(x$p.value < 0.1)
-       #    printf("%d: %f", i, x$p.value)
+       if(x$p.value < 0.1)
+           printf("%d: %s, %f", i, paste(rsids.valid, collapse=","), x$p.value)
        score <- -log10(x$p.value)
        tbls.skat[[i]] <- data.frame(rsid=paste(rsids, collapse=","),
                                    score = score,
@@ -390,7 +389,7 @@ ndufs2 <- function()
    dim(tbl.rich)
    tbl.freq <- as.data.frame(sort(table(unlist(strsplit(tbl.rich$rsid, split=","))),
                                   decreasing=TRUE))
-   head(tbl.freq, n=30)
+  head(tbl.freq, n=30)
    rsids.oi <- c("rs4575098", as.character(head(tbl.freq$Var1, n=3)))
    tbl.rich.eqtls <- subset(tbl.eqtl, rsid %in% rsids.oi)
 
@@ -494,5 +493,36 @@ run.logicFS <- function(mtx.geno, tbl.cov, rsids)
    logicFS(mtx, labels,  B = 20, nleaves = 10, rand = 1234, anneal.control = my.anneal)
 
 } # logicFS
+#----------------------------------------------------------------------------------------------------
+skat.with.all.combinations.of.topRanked.eqtls <- function()
+{
+   rsids <- subset(tbl.eqtl, pvalue <= 0.00001)$rsid
+   length(rsids)
+   rsids <- intersect(rsids, colnames(mtx.skat))
+   length(rsids)
+   rsid.sets <- combn(rsids, 4, simplify=FALSE)
+   length(rsid.sets)
+
+   tbls.skat <- list()
+   i <- 0
+   for(set in rsid.sets){
+      i <- i + 1
+      mtx.skat.i <- mtx.skat[,set]
+      x <- SKAT(mtx.skat.i, null.model, method="SKATO")
+      if(x$p.value < 0.1)
+          printf("%d: %s, %f", i, paste(set, collapse=","), x$p.value)
+      score <- -log10(x$p.value)
+      tbls.skat[[i]] <- data.frame(rsid=paste(rsids, collapse=","),
+                                   score = score,
+                                   pval = x$p.value,
+                                   stringsAsFactors=FALSE)
+       } # for i
+   tbl.skat <- do.call(rbind, tbls.skat)
+   tbl.skat <- tbl.skat[order(tbl.skat$score, decreasing=TRUE),]
+   tbl.freq <- as.data.frame(sort(table(unlist(strsplit(head(tbl.skat, n=30)$rsid, split=","))),
+                                  decreasing=TRUE))
+
+
+} # skat.with.all.combinations.of.topRanked.eqtls
 #----------------------------------------------------------------------------------------------------
 
