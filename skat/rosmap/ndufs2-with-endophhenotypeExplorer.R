@@ -89,7 +89,7 @@ test_createCovariatesTable <- function()
 {
     message(sprintf("--- test_createCovariatesTable"))
     tbl.cov <- createCovariatesTable(injectEnrichment=TRUE)
-    checkEquals(dim(tbl.cov), c(648, 10))
+    checkEquals(dim(tbl.cov), c(648, 12))
     #checkEquals(dim(tbl.cov), c(1821, 10))
        # ad, v34 and v44 are derived columns,  added by me
     coi.expected <- c("individualID","msex","apoe_genotype","age_death","cogdx","ad","ctl","dx","v34","v44", "dx")
@@ -165,6 +165,7 @@ test_createGeno <- function()
     rownames(mtx.geno.test) <- as.character(new.names)
 
     vcf.samples <- colnames(mtx.geno.test)
+    tbl.map <- etx$getIdMap()
     rosmap.vcf.samples <- intersect(vcf.samples, subset(tbl.map, study=="rosmap" & assay=="vcf")$sample)
     checkEquals(length(rosmap.vcf.samples), 1151)
     mtx.geno.test <- mtx.geno.test[, rosmap.vcf.samples]
